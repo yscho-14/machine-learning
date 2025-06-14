@@ -9,12 +9,19 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # 1. Data Loading
-print("=== [Step 1] Data Loading ===")
+
 train = pd.read_csv("/kaggle/input/playground-series-s5e6/train.csv")
 test = pd.read_csv("/kaggle/input/playground-series-s5e6/test.csv")
 sample_submission = pd.read_csv("/kaggle/input/playground-series-s5e6/sample_submission.csv")
-print(f"Train shape: {train.shape}")
-print(f"Test shape: {test.shape}")
+
+train.shape, test.shape
+
+# generate new features
+train['NPK_sum'] = train['Nitrogen'] + train['Phosphorous'] + train['Potassium']
+test['NPK_sum'] = test['Nitrogen'] + test['Phosphorous'] + test['Potassium']
+
+train['N_P_ratio'] = train['Nitrogen'] / (train['Phosphorous'] + 1)
+test['N_P_ratio'] = test['Nitrogen'] / (test['Phosphorous'] + 1)
 
 # 2. Data Overview & Visualization
 print("\n=== [Step 2] Data Overview ===")
@@ -27,26 +34,20 @@ sns.countplot(y='Fertilizer Name', data=train, order=train['Fertilizer Name'].va
 plt.title("Class Distribution of Target (Fertilizer Name)")
 plt.show()
 
-# 3. Label Encoding
-from sklearn.preprocessing import LabelEncoder
+# 3. OneHot Encoding
+from sklearn.preprocessing import OneHotEncoder
+cat_cols = ['Soil Type', 'Crop Type']
+ohe = OneHotEncoder(sparse=False, handle_unknown='ignore')
+X_cat = ohe.fit_transform(train[cat_cols])
+X_test_cat = ohe.transform(test[cat_cols])
+num_cols = [col for col in train.columns if col not in ['id', 'Fertilizer Name'] + cat_cols]
+X_num = train[num_cols].values
+X_test_num = test[num_cols].values
+X_all = np.hstack([X_num, X_cat])
+X_test_all = np.hstack([X_test_num, X_test_cat])
 
-print("\n=== [Step 3] Label Encoding ===")
-le_soil = LabelEncoder()
-le_crop = LabelEncoder()
-le_fert = LabelEncoder()
-
-train['Soil Type'] = le_soil.fit_transform(train['Soil Type'])
-train['Crop Type'] = le_crop.fit_transform(train['Crop Type'])
-train['Fertilizer Name'] = le_fert.fit_transform(train['Fertilizer Name'])
-
-test['Soil Type'] = le_soil.transform(test['Soil Type'])
-test['Crop Type'] = le_crop.transform(test['Crop Type'])
-
-features = [col for col in train.columns if col not in ['id', 'Fertilizer Name']]
+features = [col for col in train.columns if col != 'Fertilizer Name']
 target = 'Fertilizer Name'
-
-print("Sample after encoding:")
-print(train[features + [target]].head())
 
 # 4. H2O Initialization and Data Conversion
 import h2o
@@ -64,7 +65,7 @@ train_h2o[target] = train_h2o[target].asfactor()
 # 5. AutoML Training
 print("\n=== [Step 5] H2O AutoML Training ===")
 aml = H2OAutoML(
-    max_runtime_secs=300,   # 5 minutes
+    max_runtime_secs=900,   
     nfolds=5,
     seed=42,
     sort_metric="mean_per_class_error"
@@ -90,11 +91,8 @@ plt.show()
 print("\n=== [Step 7] Validation Prediction & Evaluation ===")
 from sklearn.model_selection import train_test_split
 
-X = train[features]
-y = train[target]
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+y = train['Fertilizer Name']
+X_train, X_val, y_train, y_val = train_test_split(X_all, y, test_size=0.2, random_state=42, stratify=y)
 
 # Convert validation set to H2OFrame
 val_df = X_val.copy()
